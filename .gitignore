@@ -1,5 +1,6 @@
 #data
 data/
+objects/
 *.xlsx
 
 # Byte-compiled / optimized / DLL files
