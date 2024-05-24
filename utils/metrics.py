@@ -10,6 +10,7 @@ Metrics are split into those, that
 
 #TODO: Add dtypes of pd.Series input arguments in model_monitoring_core
 """
+import functools
 import inspect
 import warnings
 import logging
@@ -33,7 +34,8 @@ class Metrics:
     def __init__(self,
                  metrics: List = None,
                  data: pd.DataFrame = None,
-                 params_cols_match: dict = None):
+                 params_cols_match: dict = None, 
+                 task: str = "binary_classification"):
         """
         In case several metrics are needed to compute, the following initialization should be provided
         :param metrics:             list, with metrics names provided as strings
@@ -43,6 +45,9 @@ class Metrics:
         """
         self.metrics = metrics
         self.__bins = dict()
+        self.warnings: Dict[str, Any] = dict()
+        self.task: str = task
+        
         if (params_cols_match is not None) & (data is not None):
             self.cols_params = {k: data[v] for k, v in params_cols_match.items()}
         elif (params_cols_match is None) & (data is not None):
@@ -50,18 +55,33 @@ class Metrics:
                   "`Metrics` methods parameters & data columns. "\
                   "The `data` parameter is ignored."
             logging.warning(msg)
-            warnings.warn(msg)
         elif (params_cols_match is not None) & (data is None):
             msg = "[Metrics] No `data` was provided. Can't compute metrics values. " \
                   "The `params_cols_match` parameter is ignored."
             logging.warning(msg)
-            warnings.warn(msg)
             self.cols_params = dict()
         else:
             self.cols_params = dict()
 
     @staticmethod
-    def precision(y_true: pd.Series, y_prob: pd.Series, threshold: float) -> float:
+    def total_records(y_true: pd.Series) -> int:
+        """Compute number of rows"""
+        return y_true.shape[0]
+
+    def total_positive_class(self, y_true: pd.Series) -> int:
+        """Compute number of rows with '1' in a Target column"""
+        if not any(y_true.isin([1])):
+            msg = f'[Metrics][total_positive_class] Target unique values: {{{y_true.unique()}}}; Expected: {{0, 1}}. '\
+                  'NaN will be returned'
+            logging.warning(msg)
+            self.warnings['total_positive_class'] = msg
+            return np.nan
+        return len(y_true[y_true == 1])
+
+    def precision(self, 
+                  y_true: pd.Series, 
+                  y_prob: pd.Series, 
+                  threshold: float) -> float:
         """
         Compute a ratio of True Positive predictions among objects predicted as positive ones:
         precision = TP / (TP + FP)
@@ -75,19 +95,25 @@ class Metrics:
                                        - if `y_prob` >= threshold, an object belongs to the positive class
         :return:                float, precision value
         """
+        if set(y_true).symmetric_difference({0, 1}) != set():
+            msg = f'[Metrics][precision] Target unique values: {{{y_true.unique()}}}; Expected: {{0, 1}}'
+            logging.warning(msg)
+            self.warnings['precision'] = msg
+            return np.nan
         y_pred = (y_prob >= threshold).astype(int)
         true_positive = ((y_true == 1) & (y_pred == 1)).sum()
         false_positive = ((y_true == 0) & (y_pred == 1)).sum()
         if (true_positive + false_positive) != 0:
             return true_positive / (true_positive + false_positive)
         else:
-            msg = "[Metrics] No positive class as predicted objects were found while computing precision. NaN is returned"
-            warnings.warn(msg)
+            msg = "[Metrics][precision] No positive class as predicted objects were found while computing precision. NaN is returned"
             logging.warning(msg)
             return np.nan
 
-    @staticmethod
-    def recall(y_true: pd.Series, y_prob: pd.Series, threshold: float) -> float:
+    def recall(self, 
+               y_true: pd.Series, 
+               y_prob: pd.Series, 
+               threshold: float) -> float:
         """
         Compute a ratio of True Positive predictions among real positive objects:
         recall = TP / (TP + FN)
@@ -101,19 +127,25 @@ class Metrics:
                                        - if `y_prob` >= threshold, an object belongs to the positive class
         :return:                float, recall value
         """
+        if set(y_true).symmetric_difference({0, 1}) != set():
+            msg = f'[Metrics][recall] Target unique values: {{{y_true.unique()}}}; Expected: {{0, 1}}'
+            logging.warning(msg)
+            self.warnings['recall'] = msg
+            return np.nan
         y_pred = (y_prob >= threshold).astype(int)
         true_positive = ((y_true == 1) & (y_pred == 1)).sum()
         false_negative = ((y_true == 1) & (y_pred == 0)).sum()
         if (true_positive + false_negative) != 0:
             return true_positive / (true_positive + false_negative)
         else:
-            msg = "[Metrics] No positive class as input objects was found while computing recall. NaN will be returned"
-            warnings.warn(msg)
+            msg = "[Metrics][recall] No positive class as input objects was found while computing recall. NaN will be returned"
             logging.warning(msg)
             return np.nan
 
-    @staticmethod
-    def false_positive_rate(y_true: pd.Series, y_prob: pd.Series, threshold: float) -> float:
+    def false_positive_rate(self, 
+                            y_true: pd.Series, 
+                            y_prob: pd.Series, 
+                            threshold: float) -> float:
         """
         Compute a ratio of misclassified real negative examples:
         false positive rate = FP / (FP + TN)
@@ -127,20 +159,27 @@ class Metrics:
                                        - if `y_prob` >= threshold, an object belongs to the positive class
         :return:                float, false positive rate value
         """
+        if set(y_true).symmetric_difference({0, 1}) != set():
+            msg = f'[Metrics][false_positive_rate] Target unique values: {{{y_true.unique()}}}; Expected: {{0, 1}}. '\
+                  'NaN will be returned'
+            logging.warning(msg)
+            self.warnings['false_positive_rate'] = msg
+            return np.nan
         y_pred = (y_prob >= threshold).astype(int)
         false_positive = ((y_true == 0) & (y_pred == 1)).sum()
         true_negative = ((y_true == 0) & (y_pred == 0)).sum()
         if (false_positive + true_negative) > 0:
             return false_positive / (false_positive + true_negative)
         else:
-            msg = "[Metrics] No negative class as input objects were found while computing false_positive_rate."\
+            msg = "[Metrics][false_positive_rate] No negative class as input objects were found while computing false_positive_rate."\
                   "NaN will be returned"
-            warnings.warn(msg)
             logging.warning(msg)
             return np.nan
 
-    @staticmethod
-    def true_positive_rate(y_true: pd.Series, y_prob: pd.Series, threshold: float) -> float:
+    def true_positive_rate(self, 
+                           y_true: pd.Series, 
+                           y_prob: pd.Series, 
+                           threshold: float) -> float:
         """
         Compute a ratio of True Positive predictions among real positive objects:
         true positive rate = TP / (TP + FN)
@@ -154,20 +193,25 @@ class Metrics:
                                        - if `y_prob` >= threshold, an object belongs to the positive class
         :return:                float, true positive rate value
         """
+        if set(y_true).symmetric_difference({0, 1}) != set():
+            msg = f'[Metrics][true_positive_rate] Target unique values: {{{y_true.unique()}}}; Expected: {{0, 1}}. '\
+                  'NaN will be returned'
+            self.warnings['true_positive_rate'] = msg
+            logging.warning(msg)
+            return np.nan
         y_pred = (y_prob >= threshold).astype(int)
         true_positive = ((y_true == 1) & (y_pred == 1)).sum()
         false_negative = ((y_true == 1) & (y_pred == 0)).sum()
         if (true_positive + false_negative) > 0:
             return true_positive / (true_positive + false_negative)
         else:
-            msg = "[Metrics] No positive class as input objects was found while computing true_positive_rate."\
+            msg = "[Metrics][true_positive_rate] No positive class as input objects was found while computing true_positive_rate."\
                   "NaN will be returned"
-            warnings.warn(msg)
             logging.warning(msg)
             return np.nan
 
-    @staticmethod
-    def fraud_value_detection_rate(value_col: pd.Series,
+    def fraud_value_detection_rate(self, 
+                                   value_col: pd.Series,
                                    y_true: pd.Series,
                                    y_prob: pd.Series,
                                    threshold: float) -> float:
@@ -186,20 +230,25 @@ class Metrics:
                                        - if `y_prob` >= threshold, an object belongs to the positive class
         :return:                float
         """
+        if set(y_true).symmetric_difference({0, 1}) != set():
+            msg = f'[Metrics][fraud_value_detection_rate] Target unique values: {{{y_true.unique()}}}; Expected: {{0, 1}}. '\
+                  'NaN will be returned'
+            self.warnings['fraud_value_detection_rate'] = msg
+            logging.warning(msg)
+            return np.nan
         y_pred = (y_prob >= threshold).astype(int)
         true_positive_value = value_col[(y_true == 1) & (y_pred == 1)].sum()
         false_negative_value = value_col[(y_true == 1) & (y_pred == 0)].sum()
         if (true_positive_value + false_negative_value) > 0:
             return true_positive_value / (true_positive_value + false_negative_value)
         else:
-            msg = "[Metrics] No positive class as input objects was found while computing fraud_value_detection_rate." \
+            msg = "[Metrics][fraud_value_detection_rate] No positive class as input objects was found while computing fraud_value_detection_rate." \
                   "NaN will be returned"
-            warnings.warn(msg)
             logging.warning(msg)
             return np.nan
 
-    @staticmethod
-    def bad_rate_by_value(value_col: pd.Series,
+    def bad_rate_by_value(self, 
+                          value_col: pd.Series,
                           y_true: pd.Series,
                           y_prob: pd.Series,
                           threshold: float) -> float:
@@ -218,20 +267,24 @@ class Metrics:
                                        - if `y_prob` >= threshold, an object belongs to the positive class
         :return:                float
         """
+        if set(y_true).symmetric_difference({0, 1}) != set():
+            msg = f'[Metrics] Target unique values: {{{y_true.unique()}}}; Expected: {{0, 1}}. '\
+                  'NaN will be returned'
+            self.warnings['bad_rate_by_value'] = msg
+            logging.warning(msg)
+            return np.nan
         y_pred = (y_prob >= threshold).astype(int)
         true_positive_value = value_col[(y_true == 1) & (y_pred == 1)].sum()
         false_positive_value = value_col[(y_true == 0) & (y_pred == 1)].sum()
         if (true_positive_value + false_positive_value) > 0:
             return true_positive_value / (true_positive_value + false_positive_value)
         else:
-            msg = "[Metrics] No predictions of positive class while computing `bad_rate_by_value`." \
+            msg = "[Metrics][bad_rate_by_value] No predictions of positive class while computing `bad_rate_by_value`." \
                   "NaN will be returned"
-            warnings.warn(msg)
             logging.warning(msg)
             return np.nan
 
-    @staticmethod
-    def positive_class_ratio(y_true: pd.Series) -> float:
+    def positive_class_ratio(self, y_true: pd.Series) -> float:
         """
         Compute ratio of the positive class:
 
@@ -240,10 +293,15 @@ class Metrics:
         :param y_true: pd.Series, with true positive class
         :return:       float, percentage of the positive class
         """
-        return y_true.sum() / len(y_true)
+        if not any(y_true.isin([1])):
+            msg = f'[Metrics][positive_class_ratio] Target unique values: {{{y_true.unique()}}}; Expected: {{0, 1}}. '\
+                  'NaN will be returned'
+            self.warnings['positive_class_ratio'] = msg
+            logging.warning(msg)
+            return np.nan
+        return (y_true == 1).sum() / len(y_true)
 
-    @staticmethod
-    def gini(y_true: pd.Series, y_prob: pd.Series) -> float:
+    def gini(self, y_true: pd.Series, y_prob: pd.Series) -> float:
         """
         Gini Index, which is computed as 2*AUC - 1. Where AUC is area under the Receiver Operating Characteristic.
         Gini Index is between [-1 , 1], where -1 means bad model quality, 1 - perfect.
@@ -251,6 +309,12 @@ class Metrics:
         :param y_prob:          pd.Series, predicted confidence/probability of object belonging to the positive class
         :return:                float, value of Gini Index
         """
+        if set(y_true).symmetric_difference({0, 1}) != set():
+            msg = f'[Metrics][gini] Target unique values: {{{y_true.unique()}}}; Expected: {{0, 1}}. '\
+                  'NaN will be returned'
+            self.warnings['gini'] = msg
+            logging.warning(msg)
+            return np.nan
         fpr, tpr, thresholds = roc_curve(y_true, y_prob)
         auc_value = auc(fpr, tpr)
         gini_value = 2 * auc_value - 1
@@ -380,7 +444,7 @@ class Metrics:
                 metric=metrics_name, thresholds_list=df_metrics.threshold.to_list(), decimal=decimal
             )
             if len(metrics_value[metrics_name]) != len(df_metrics):
-                raise ValueError(f"Dimension mismatch: {len(metrics_value)} != {len(df_metrics)}")
+                raise ValueError(f"[Metrics] Dimension mismatch: {len(metrics_value)} != {len(df_metrics)}")
             metrics_value = pd.DataFrame.from_dict(metrics_value)
             df_metrics = pd.merge(df_metrics, metrics_value, how="inner", on="threshold")
         df_metrics.set_index("threshold", inplace=True)
@@ -474,7 +538,6 @@ class Metrics:
             msg = "[Metrics] Parameter `n_threshold` or `threshold` is not used since no threshold dependent metrics "\
                   "is in input"
             logging.warning(msg)
-            warnings.warn(msg)
         # compute threshold independent metrics
         computed_metrics["other"] = dict()
         for metrics_name in metrics_no_thresholds:
@@ -517,11 +580,9 @@ class Metrics:
         :return:                        float, PSI value
         """
         feature_col = value_col_actual.name
-        print(feature_col)
         if value_col_actual.empty or value_col_expected.empty:
-            msg = "[Metrics] {} and/or {} empty. 0 will be returned".format(value_col_actual.name, value_col_expected.name)
+            msg = "[Metrics][make_split_and_compute_psi] {} and/or {} empty. 0 will be returned".format(value_col_actual.name, value_col_expected.name)
             logging.warning(msg)
-            warnings.warn(msg)
             return 0
         value_expected_bins, unique_bins = Splitter.split_by_quantiles(value_col_expected, n_quantiles=n_bins, retbins=True)
         act_split_values = Splitter().split_based_on_the_input_bins(
@@ -555,11 +616,10 @@ class Metrics:
         value_expected.rename(columns={"index": "bins"}, inplace=True)
 
         if len(value_actual) != len(value_expected):
-            msg = "[Metrics] `{}`: number of unique bins in actual values {} and in expected values {} can't be matched".format(
+            msg = "[Metrics][make_split_and_compute_psi] `{}`: number of unique bins in actual values {} and in expected values {} can't be matched".format(
                 value_col_actual.name, len(value_actual), len(value_expected)
             )
             logging.warning(msg)
-            warnings.warn(msg)
 
         all_values = pd.merge(
             value_expected, value_actual, how="outer", on="bins"
@@ -615,8 +675,8 @@ class Metrics:
                                                      its information value is stored
         """
         # split data into bins & count total number of observations and number of positive class per bin
-        qq_df_stats = qq_df.groupby("bins")[target_col].sum().reset_index(name="n_positive")
-        qq_df_stats["n"] = qq_df.groupby("bins")[target_col].count().values
+        qq_df_stats = qq_df.groupby("bins", observed=False)[target_col].sum().reset_index(name="n_positive")
+        qq_df_stats["n"] = qq_df.groupby("bins", observed=False)[target_col].count().values
         qq_df_stats["n_negative"] = qq_df_stats["n"] - qq_df_stats["n_positive"]
 
         # compute number of positive and negative class in the input data
@@ -636,8 +696,7 @@ class Metrics:
             min_woe = min(qq_df_stats['woe'].loc[qq_df_stats['woe'] != -np.inf])
             min_woe = min_woe * negative_inf_offset
         except:
-            msg = "WOE smoothing can't be applied"
-            warnings.warn(msg)
+            msg = "[Metrics] WOE smoothing can't be applied"
             max_woe = positive_inf_offset
             min_woe = negative_inf_offset
 
@@ -693,7 +752,7 @@ class Metrics:
         # split an input feature into quantiles where the target is not 2
         actual_values = df_actual.loc[df_actual[target_col] != 2, feature_col].reset_index(drop=True)
         if preserved_split:
-            value_expected_bins = pd.DataFrame(self.__bins[feature_col], columns=["bins"])
+            value_expected_bins = self.__bins[feature_col]
             split_ = Splitter().split_based_on_the_input_bins(
                 value_col_actual=actual_values,
                 value_expected_bins=value_expected_bins,
@@ -759,7 +818,8 @@ class Metrics:
                                       zero_offset: float = 0.01,
                                       return_psi_per_bin: bool = False,
                                       preserve_split: bool = False,
-                                      return_binned_col: bool = False) -> list:
+                                      return_binned_col: bool = False, 
+                                      decimals: int=3) -> list:
         """
         Compute psi for each column and return in the format:
         [
@@ -789,8 +849,8 @@ class Metrics:
             binned_values = dict()
             if col_info["type"] == "numeric":
                 psi_values = self.make_split_and_compute_psi(
-                    value_col_actual=col_info["values"]["selected_time_period"],
-                    value_col_expected=col_info["values"]["benchmark"],
+                    value_col_actual=col_info["values"]["selected_time_period"].round(decimals),
+                    value_col_expected=col_info["values"]["benchmark"].round(decimals),
                     bins_method=bins_method, n_bins=n_bins,
                     zero_offset=zero_offset,
                     return_psi_per_bin=True,
@@ -809,11 +869,13 @@ class Metrics:
                     zero_offset=zero_offset
                 )
 
-                slctd = col_info["values"]["selected_time_period"].value_counts(normalize=True).reset_index(
-                    name="slctd"
-                ).rename(columns={"index": "bins"})
-                bnchmrk = col_info["values"]["benchmark"].value_counts(normalize=True).reset_index(
-                    name="bnchmrk").rename(columns={"index": "bins"})
+                slctd = col_info["values"]["selected_time_period"].value_counts(normalize=True)
+                feat_name = slctd.index.name
+                slctd = slctd.reset_index(name="slctd").rename(columns={feat_name: "bins"})
+                
+                bnchmrk = col_info["values"]["benchmark"].value_counts(normalize=True)
+                bnchmrk = bnchmrk.reset_index(name="bnchmrk").rename(columns={feat_name: "bins"})
+                    
                 overall = pd.merge(slctd, bnchmrk, how="outer", on="bins")
                 overall.slctd.fillna(0, inplace=True)
                 overall.bnchmrk.fillna(0, inplace=True)
@@ -924,8 +986,8 @@ class Metrics:
         """
         df["_date"] = pd.to_datetime(df[params_cols_match["date"]]).dt.date + pd.offsets.MonthEnd(0)
 
-        df_count_per_month = df.groupby(["_date"])[params_cols_match["date"]].count().reset_index(name="n")
-        df_count_per_month.sort_values(["_date"], inplace=True, ignore_index=True)
+        df_count_per_month = df.groupby(["_date"], observed=False)[params_cols_match["date"]].count().reset_index(name="n")
+        df_count_per_month.sort_values(["_date"], inplace=True, ignore_index=True, observed=False)
 
         cum_sum = 0
         dates_to_compute = []

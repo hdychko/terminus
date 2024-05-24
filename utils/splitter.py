@@ -14,7 +14,8 @@ class Splitter:
     def split_by_spearman_corr(value_col: pd.Series,
                                 y_true: pd.Series,
                                 n_bins_max: int,
-                                n_bins_min: int = 2) -> pd.DataFrame:
+                                n_bins_min: int = 2, 
+                                decimals: int = 3) -> pd.DataFrame:
         """
         Split an input column into equaly spaced bins in a way, that
         the number of observations per each bin has the largest monotonic dependence (the largest
@@ -32,7 +33,7 @@ class Splitter:
         spearman_corr_list = []
         n_bins_list = []
         for n_bins in range(n_bins_min, n_bins_max + 1):
-            df_bins = pd.DataFrame({'value_col': value_col, 'y_true': y_true, 'bins': pd.cut(y_true, n_bins)})
+            df_bins = pd.DataFrame({'value_col': value_col, 'y_true': y_true, 'bins': pd.cut(y_true, n_bins, include_lowest=True, precision=decimals)})
 
             df_bins_y_true = df_bins.groupby('bins').y_true.count().reset_index(name="y_true")
             df_bins_value_col = df_bins.groupby('bins').value_col.count().reset_index(name="value_col")
@@ -54,7 +55,7 @@ class Splitter:
         # find the number of bins with the largest absolute value of spearman correlation
         largest_corr_indx = np.nanargmax(np.abs(np.array(spearman_corr_list)))
 
-        pearson_bins = pd.cut(value_col, n_bins_list[largest_corr_indx], retbins=True)[1]
+        pearson_bins = pd.cut(value_col, n_bins_list[largest_corr_indx], retbins=True, include_lowest=True, precision=decimals)[1]
         # adding +-inf
         pearson_bins = np.insert(pearson_bins, 0, -np.inf)
         pearson_bins = np.append(pearson_bins, np.inf)
@@ -62,10 +63,10 @@ class Splitter:
             col_name = "input_column"
         else:
             col_name = value_col.name
-        return pd.DataFrame({col_name: value_col, 'bins': pd.cut(value_col, pearson_bins)})
+        return pd.DataFrame({col_name: value_col, 'bins': pd.cut(value_col, pearson_bins, include_lowest=True, precision=decimals)})
 
     @staticmethod
-    def split_by_uniform_distr(value_col: pd.Series, n_bins: int) -> pd.DataFrame:
+    def split_by_uniform_distr(value_col: pd.Series, n_bins: int, decimals: int = 3) -> pd.DataFrame:
         """
         Split an input column values into `n_bins` equal-width bins.
         The range of the input column is extended with +-infinity on corresponding edges to include the minimum and maximum its values.
@@ -74,7 +75,7 @@ class Splitter:
         :param n_bins:          int, number of equal-width bins
         :return:                pd.DataFrame, with the input column and its column name and bins with `bins` column name
         """
-        uniform_bins = pd.cut(value_col, bins=n_bins, retbins=True)[1]
+        uniform_bins = pd.cut(value_col, bins=n_bins, retbins=True, include_lowest=True, precision=decimals)[1]
         # adding +-inf
         uniform_bins[0] = -np.inf
         uniform_bins[-1] = np.inf
@@ -82,7 +83,7 @@ class Splitter:
             col_name = "input_col"
         else:
             col_name = value_col.name
-        return pd.DataFrame({col_name: value_col, 'bins': pd.cut(value_col, uniform_bins)})
+        return pd.DataFrame({col_name: value_col, 'bins': pd.cut(value_col, uniform_bins, include_lowest=True, precision=decimals)})
 
     @staticmethod
     def split_by_quantiles(value_col: pd.Series, 
@@ -116,22 +117,30 @@ class Splitter:
     def __generate_bin_plus_minus_epsilon_to_borders(left_bounds: pd.Series,
                                                      right_bounds: pd.Series, 
                                                      epsilon: float=1e-5):
-        value_expected_bins_unique = pd.Series(name="bins")
         for i in range(0, len(left_bounds)):
-            value_expected_bins_unique = pd.concat(
-                (
-                    value_expected_bins_unique,
-                    pd.Series(
-                        pd.Interval(
-                            left_bounds[i], right_bounds[i],
-                            closed="right"
-                        ),
-                        name="bins"
+            if i == 0:
+                value_expected_bins_unique = pd.Series(
+                    pd.Interval(
+                        left_bounds[i], right_bounds[i],
+                        closed="right"
                     ),
-
+                    name="bins"
                 )
-            )
-        return value_expected_bins_unique
+            else:
+                value_expected_bins_unique = pd.concat(
+                    (
+                        value_expected_bins_unique,
+                        pd.Series(
+                            pd.Interval(
+                                left_bounds[i], right_bounds[i],
+                                closed="right"
+                            ),
+                            name="bins"
+                        ),
+
+                    )
+                )
+        return value_expected_bins_unique.reset_index(drop=True)
 
     def split_based_on_the_input_bins(self,
                                       value_col_actual: pd.Series,
@@ -144,14 +153,14 @@ class Splitter:
 
         min_val_exp = np.array(list(map(lambda x: x.left, value_expected_bins))).min()
         min_val_act = value_col_actual.min()
-
+        
         if ((round(max_val_exp, decimals) < round(max_val_act, decimals))) &  \
-                (round(min_val_exp, decimals) < round(min_val_act, decimals)):
+                (round(min_val_exp, decimals) <= round(min_val_act, decimals)):
             msg = "[Splitter] Max of actual `{col_name}`={max_act}. Max of expected `{col_name}`={max_exp}".format(
                 col_name=col_name, max_act=max_val_act, max_exp=max_val_exp
             )
             logging.warning(msg)
-            warnings.warn(msg)
+            # warnings.warn(msg)
 
             value_missed_bins = Splitter.split_by_quantiles(pd.Series([max_val_exp, max_val_act]), n_quantiles=1, precision=decimals)
 
@@ -170,12 +179,12 @@ class Splitter:
             value_expected_bins_unique_left = value_expected_bins_unique_left[:-1]
             value_expected_bins_unique_right = value_expected_bins_unique_right[:-1]
         elif (round(float(min_val_exp), decimals) > round(float(min_val_act), decimals)) & \
-                (round(float(max_val_exp), decimals) > round(float(max_val_act), decimals)):
+                (round(float(max_val_exp), decimals) >= round(float(max_val_act), decimals)):
             msg = "[Splitter] Min of actual `{col_name}`={min_act}. Min of expected `{col_name}`={min_exp}".format(
                 col_name=col_name, min_act=min_val_act, min_exp=min_val_exp
             )
             logging.warning(msg)
-            warnings.warn(msg)
+            # warnings.warn(msg)
 
             value_missed_bins = Splitter.split_by_quantiles(pd.Series([min_val_act, min_val_exp]), n_quantiles=1, precision=decimals)
 
@@ -201,7 +210,7 @@ class Splitter:
                 col_name=col_name, min_act=min_val_act, max_act=max_val_act, min_exp=min_val_exp, max_exp=max_val_exp
             )
             logging.warning(msg)
-            warnings.warn(msg)
+            # warnings.warn(msg)
             value_missed_bins_max = Splitter.split_by_quantiles(pd.Series([max_val_exp, max_val_act]), n_quantiles=1, precision=decimals)
             value_missed_bins_min = Splitter.split_by_quantiles(pd.Series([min_val_act, min_val_exp]), n_quantiles=1, precision=decimals)
             value_expected_bins_unique = pd.IntervalIndex(
@@ -209,30 +218,6 @@ class Splitter:
                     (
                         pd.Series(value_expected_bins),
                         pd.Series(value_missed_bins_max.bins.unique()),
-                        pd.Series(value_missed_bins_min.bins.unique())
-                    )
-                ).unique()
-            )
-            value_expected_bins_unique = value_expected_bins_unique.sort_values()
-            value_expected_bins_unique_left = value_expected_bins_unique.map(lambda x: x.left).astype(float).values
-            value_expected_bins_unique_right = value_expected_bins_unique.map(lambda x: x.right).astype(float).values
-            
-            value_expected_bins_unique_left[-1] = value_expected_bins_unique_right[-2]
-            value_expected_bins_unique_left = [round(int(elem * 10**decimals) / (10 ** decimals), decimals) for elem in value_expected_bins_unique_left]
-            value_expected_bins_unique_right = [round(int(elem * 10**decimals) / (10 ** decimals), decimals) for elem in value_expected_bins_unique_right]
-        elif (round(max_val_exp, decimals) >= round(max_val_act, decimals)) &\
-                (round(min_val_exp, decimals) > round(min_val_act, decimals)):
-            msg = "[Splitter] Actual `{col_name}`: min={min_act}. " \
-                  "Expected `{col_name}`: min={min_exp}".format(
-                col_name=col_name, min_act=min_val_act, min_exp=min_val_exp
-            )
-            logging.warning(msg)
-            warnings.warn(msg)
-            value_missed_bins_min = Splitter.split_by_quantiles(pd.Series([min_val_act, min_val_exp]), n_quantiles=1, precision=decimals)
-            value_expected_bins_unique = pd.IntervalIndex(
-                pd.concat(
-                    (
-                        pd.Series(value_expected_bins),
                         pd.Series(value_missed_bins_min.bins.unique())
                     )
                 ).unique()
@@ -257,22 +242,25 @@ class Splitter:
                 value_expected_bins_unique_left,
                 value_expected_bins_unique_right,
             )
+        value_expected_edges_unique = [elem.right for elem in value_expected_bins_unique]
+        value_expected_edges_unique = [value_expected_bins_unique.values[0].left] + value_expected_edges_unique
+        
         split_return, return_bins = pd.cut(
-            value_col_actual, bins=pd.IntervalIndex(value_expected_bins_unique), retbins=True, precision=decimals
+            value_col_actual, bins=value_expected_edges_unique, retbins=True, precision=decimals, include_lowest=True
         )
         if split_return.isna().any():
-            print(value_expected_bins_unique_left)
-            print(value_expected_bins_unique_right)
-            print(value_col_actual[split_return.isna()])
+            # print(value_expected_bins_unique_left)
+            # print(value_expected_bins_unique_right)
+            # print(value_col_actual[split_return.isna()].values)
             raise ValueError("Incorrect Split")
-        return split_return, return_bins
+        return split_return, pd.IntervalIndex.from_breaks(return_bins)
 
     def split_actual_values_into_bins_based_on_expected_split(self,
                                                               value_col_actual: pd.Series,
                                                               value_col_expected: pd.Series,
                                                               bins_method: str,
                                                               n_bins: int,
-                                                              y_true_expected: pd.Series = None, decimals=3) -> Tuple[pd.DataFrame, pd.DataFrame]:
+                                                              y_true_expected: pd.Series = None, decimals: int=3) -> Tuple[pd.DataFrame, pd.DataFrame]:
         """
         Split actual values in bins using binning of expected values.
         Supported binning methods: {spearman_corr, uniform, quantiles}
@@ -311,7 +299,7 @@ class Splitter:
 
             # split actual values based on expected binning
             value_actual_bins["bins"] = pd.cut(
-                value_col_actual, bins=value_expected_bins_unique
+                value_col_actual, bins=value_expected_bins_unique, include_lowest=True, precision=decimals
             )
 
             value_expected_bins["bins"] = pd.IntervalIndex(value_expected_bins["bins"])
@@ -324,27 +312,28 @@ class Splitter:
             value_expected_bins_unique = pd.IntervalIndex(value_expected_bins.bins.unique())
 
             # split actual values based on expected binning
-            value_actual_bins["bins"] = pd.cut(value_col_actual, bins=value_expected_bins_unique)
+            value_actual_bins["bins"] = pd.cut(value_col_actual, bins=value_expected_bins_unique, include_lowest=True, precision=decimals)
 
-            value_expected_bins["bins"] = pd.\
-                IntervalIndex(value_expected_bins["bins"])
+            value_expected_bins["bins"] = pd.ntervalIndex(value_expected_bins["bins"])
             value_actual_bins["bins"] = pd.IntervalIndex(value_actual_bins["bins"])
         elif bins_method == "quantiles":
             # split expected values into bins
-            value_expected_bins = Splitter.split_by_quantiles(value_col_expected, n_quantiles=n_bins, precision=decimals)
+            value_expected_bins, unique_bins = Splitter.split_by_quantiles(value_col_expected, n_quantiles=n_bins, retbins=True)
 
             value_actual_bins["bins"], value_actual_bins_ = self.split_based_on_the_input_bins(
                 value_col_actual=value_col_actual,
-                value_expected_bins=value_expected_bins,
+                value_expected_bins=unique_bins,
                 col_name=col_name,
-                decimals=decimals
+                decimals=decimals, 
+                epsilon=None
             )
 
             value_expected_bins["bins"] = self.split_based_on_the_input_bins(
                 value_col_actual=value_col_expected,
-                value_expected_bins=pd.DataFrame(value_actual_bins_, columns=["bins"]),
+                value_expected_bins=value_actual_bins_,
                 col_name=col_name,
-                decimals=decimals
+                decimals=decimals, 
+                epsilon=None
             )[0]
 
             value_expected_bins["bins"] = pd.IntervalIndex(value_expected_bins["bins"])

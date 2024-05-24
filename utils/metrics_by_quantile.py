@@ -7,7 +7,12 @@ import warnings
 import logging
 import numpy as np
 import pandas as pd
-from typing import Tuple, List, Iterable
+from typing import (
+    Tuple, 
+    List, 
+    Iterable, 
+    Union
+)
 
 from .splitter import Splitter
 from .metrics import Metrics
@@ -266,7 +271,9 @@ class MetricsByQuantile(Metrics):
             df_stats["cum_n_positive"] = df_stats["n_positive"].cumsum()
 
             # Cumulative % of total population
-            df_stats["Cumulative % of total population"] = df_stats["% of total population"].cumsum().round(2)
+            df_stats["Cumulative % of total population"] = (df_stats["n_obs"] * 100 / data.shape[0]).cumsum().round(2)
+            # % of total population
+            df_stats["% of total population"] = (df_stats["n_obs"] * 100 / data.shape[0]).round(2)
             df_stats["cum_n_obs"] = df_stats["n_obs"].cumsum()
 
         # cumulative `value_col`
@@ -290,8 +297,8 @@ class MetricsByQuantile(Metrics):
         :param intervals:       Iterable, with intervals
         :return:                List, of string
         """
-        # print(intervals)
-        return [elem.split(", ")[0][1:] + "--" + elem.split(", ")[1][:-1] for elem in intervals.astype(str)]
+#         return [elem.split(", ")[0][1:] + "--" + elem.split(", ")[1][:-1] for elem in intervals.astype(str)]
+        return [str(elem).split(", ")[0][1:] + "--" + str(elem).split(", ")[1][:-1] for elem in intervals]
 
     def _metrics_by_quantiles(self,
                               y_true: pd.Series,
@@ -498,12 +505,18 @@ class MetricsByQuantile(Metrics):
 
     @staticmethod
     def quantiles_to_scores(df,
-                            max_score_value,
-                            min_score_value,
+                            max_score_value: float = None,
+                            min_score_value: float = None,
                             replace_negative_with_zero: bool = True,
-                            scores_type="int",
-                            direct_transformation=True,
+                            scores_type: str = "int",
+                            transformation: Union[str, None] = None,
                             decimals: int = 3):
+        """
+        :param transformation: any of {'direct', 'indirect', None};
+                                - 'scaling_direct': Y_pred * (max - min) + min
+                                - 'scaling_indirect': max - Y_pred * (max - min)
+                                - {'indirect', None}: Y_pred
+        """
         col_name = "Scores"
         split_score = df["Scores"].str.split("--")
 
@@ -514,16 +527,20 @@ class MetricsByQuantile(Metrics):
             df.loc[df.left_decile_value < 0, "left_decile_value"] = 0.
             df.loc[df.right_decile_value < 0, "left_decile_value"] = 0.
 
-        if direct_transformation:
+        if transformation == 'scaling_direct':
             df["right_decile_value"] = df["right_decile_value"].values * (
                         max_score_value - min_score_value) + min_score_value
             df["left_decile_value"] = df["left_decile_value"].values * (
                         max_score_value - min_score_value) + min_score_value
-        else:
+        elif transformation == 'scaling_indirect':
             df["right_decile_value"] = max_score_value - df["right_decile_value"].values * (
                         max_score_value - min_score_value)
             df["left_decile_value"] = max_score_value - df["left_decile_value"].values * (
                         max_score_value - min_score_value)
+        elif transformation in (None, 'indirect'):
+            pass
+        else:
+            raise ValueError(f'Unsuported value `{transformation}` of the parameter `transformation`')
 
         if scores_type == "int":
             df["right_decile_value"] = df["right_decile_value"].round(0).astype(int).astype(str)
@@ -532,9 +549,9 @@ class MetricsByQuantile(Metrics):
             df["right_decile_value"] = df["right_decile_value"].round(decimals).astype(float).astype(str)
             df["left_decile_value"] = df["left_decile_value"].round(decimals).astype(float).astype(str)
 
-        if direct_transformation:
+        if transformation in ('scaling_direct', 'indirect', None):
             df[col_name] = df["left_decile_value"] + "-" + df["right_decile_value"]
-        else:
+        elif transformation == 'scaling_indirect':
             df[col_name] = df["right_decile_value"] + "-" + df["left_decile_value"]
         del df["right_decile_value"], df["left_decile_value"]
         return df
@@ -546,27 +563,35 @@ class MetricsByQuantile(Metrics):
                                                              max_score_value: float,
                                                              min_score_value: float,
                                                              scores_type: str,
-                                                             direct_transformation: bool,
+                                                             transformation: str,
                                                              n_quantiles: int = 10,
                                                              zero_offset: float = 0.0001,
                                                              decimals: int = 3
                                                              ) -> pd.DataFrame:
+        """
+        # transformation: 
+        # - scaling_direct - predictions are scaled to get values from 0 to 1 so that the lowest value corresponds to 0 and the largest - to 1; meaning the probability of being '1'st class;
+        # - scaling_indirect - predictions are scaled to get values from 0 to 1 so that the largest value corresponds to 0 and the lowest - to 1; meaning the probability of being '1'st class;
+        # - indirect - no trnsformation is applied; the values are used as they are, meaning the larger value - the lower chances of being '1'st class;
+        # - None - [default] - no trnsformation is applied; the values are used as they are, meaning the larger value - the higher chances of being '1'st class;
+        """
         df_stats_benchmark, df_stats_slct_period = self._quantiles_analytics_by_benchmark_and_selected_period(
             y_benchmark=y_benchmark,
             y_slctd_period=y_slctd_period,
             list_of_metrics=list_of_metrics,
+            decimals=decimals,
             n_quantiles=n_quantiles,
             zero_offset=zero_offset
         )
 
         df_stats_benchmark = self.quantiles_to_scores(
             df_stats_benchmark, max_score_value=max_score_value, min_score_value=min_score_value,
-            scores_type=scores_type, direct_transformation=direct_transformation, decimals=decimals
+            scores_type=scores_type, transformation=transformation, decimals=decimals
         )
 
         df_stats_slct_period = self.quantiles_to_scores(
             df_stats_slct_period, max_score_value=max_score_value, min_score_value=min_score_value,
-            scores_type=scores_type, direct_transformation=direct_transformation, decimals=decimals
+            scores_type=scores_type, transformation=transformation, decimals=decimals
         )
 
         # deciles psi
@@ -576,7 +601,7 @@ class MetricsByQuantile(Metrics):
         )
         df_deciles.reset_index(drop=True, inplace=True)
         df_deciles.sort_values(
-            "#Quantile_benchmark", ascending=False,
+            "#Quantile_benchmark", ascending=(transformation == 'indirect'),
             inplace=True, ignore_index=True
         )
         df_deciles.rename(
@@ -586,7 +611,7 @@ class MetricsByQuantile(Metrics):
             }, inplace=True
         )
 
-        df_deciles.rename(
+        df_deciles = df_deciles.rename(
             columns={
                 "Precision": "Bad Rate",
                 "Precision_benchmark": "Bad Rate_benchmark",
@@ -602,12 +627,12 @@ class MetricsByQuantile(Metrics):
 
                 "% of total population": "% of Total",
                 "% of total population_benchmark": "% of Total_benchmark"
-            }, inplace=True
+            }
         )
-        df_deciles["Score Band"].fillna(df_deciles["Score Band_benchmark"], inplace=True)
-        df_deciles["PSI"].fillna(1, inplace=True)
+        df_deciles["Score Band"] = df_deciles["Score Band"].fillna(df_deciles["Score Band_benchmark"])
+        df_deciles["PSI"] = df_deciles["PSI"].fillna(1)
         for col in ["% of Total Bads", "Bad Rate", "Bad", "Total", "% of Total"]:
-            df_deciles[col].fillna(0, inplace=True)
+            df_deciles[col] = df_deciles[col].fillna(0)
 
         columns = df_deciles.columns
         columns_from_benchmark = [col for col in columns if "benchmark" in col]
