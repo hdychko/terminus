@@ -1,0 +1,20 @@
+artifact_path: 04-LogRegression-hyperparams_tunning-22
+flavors:
+  python_function:
+    env:
+      conda: conda.yaml
+      virtualenv: python_env.yaml
+    loader_module: mlflow.sklearn
+    model_path: model.pkl
+    predict_fn: predict
+    python_version: 3.12.3
+  sklearn:
+    code: null
+    pickled_model: model.pkl
+    serialization_format: cloudpickle
+    sklearn_version: 1.4.2
+mlflow_version: 2.13.0
+model_size_bytes: 1009
+model_uuid: 47342df14d6040118edd1e86a316ea0d
+run_id: c4717b76f77c49b2a666e7f6e2facdee
+utc_time_created: '2024-05-24 11:00:38.326350'

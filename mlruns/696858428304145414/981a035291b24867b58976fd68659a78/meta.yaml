@@ -1,0 +1,16 @@
+artifact_uri: mlflow-artifacts:/696858428304145414/981a035291b24867b58976fd68659a78/artifacts
+deleted_time: 1716486184621
+end_time: 1716485703481
+entry_point_name: ''
+experiment_id: '696858428304145414'
+lifecycle_stage: deleted
+run_id: 981a035291b24867b58976fd68659a78
+run_name: 02-LogRegression-hyperparams_tunning
+run_uuid: 981a035291b24867b58976fd68659a78
+source_name: ''
+source_type: 4
+source_version: ''
+start_time: 1716484859957
+status: 4
+tags: []
+user_id: hdychko

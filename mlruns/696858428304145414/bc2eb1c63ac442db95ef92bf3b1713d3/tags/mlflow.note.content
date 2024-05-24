@@ -1,0 +1,8 @@
+    'features': 47,
+    'target': _GB6_Flag_2Limit_bin,
+    'target_vals': '0==G, 1==B',
+    'model': LogisticRegression,
+    'data_version': '22.05.2024', 
+    'train_period': [2021-12-01, 2022-01-01),
+    'val_period': [2022-01-01, 2022-05-01),
+    'test_period': [2022-05-01, 2022-08-01),
