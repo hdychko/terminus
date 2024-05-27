@@ -122,8 +122,6 @@ def search_hyper_params_and_log(run_name: str,
                         )
                     )
                 )
-                if os.path.exists(f'{run_name}-{i}'):
-                    shutil.rmtree(f'{run_name}-{i}')
                 continue
     
         # generate predictions
@@ -171,10 +169,6 @@ def search_hyper_params_and_log(run_name: str,
             mlflow.log_params(params)
             mlflow.log_metric(f"Val-PR_AUC", auc_values)
             mlflow.log_metric(f"Val-GINI", gini_val)
-            
-            # remove directory to save the model of the current run (if not the first run of the experiment)
-            if os.path.exists(f'{run_name}-{i}'):
-                shutil.rmtree(f'{run_name}-{i}')  
 
             # save the model
             mlflow.sklearn.save_model(model_obj, f'{run_name}-{i}')
@@ -372,7 +366,12 @@ def search_hyper_params_and_log(run_name: str,
         
         mlflow.log_table(data=df_coeff, artifact_file=f"{run_name}-best_coeff.json")
         mlflow.log_table(data=df_metrics, artifact_file=f"{run_name}-hypertunning.json")
-        
+
+
+        # remove directory to save the model of the current run (if not the first run of the experiment)
+        for i in range(n_iter):
+            if os.path.exists(f'{run_name}-{i}'):
+                shutil.rmtree(f'{run_name}-{i}')  
         return (df_metrics, df_coeff, data_dict, model_obj, std_scaler)
 
 

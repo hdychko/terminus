@@ -1,6 +1,8 @@
 #data
 data/
 objects/
+mlartifacts/
+mlruns/
 *.xlsx
 
 # Byte-compiled / optimized / DLL files
