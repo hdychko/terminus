@@ -60,6 +60,7 @@ def search_hyper_params_and_log(run_name: str,
                                 n_iter: int,
                                 model: Any,
                                 palette: Dict[str, Any],
+                                model_path: str, 
                                 custom_params_updates=None, 
                                 tags: Dict[str, str]=None, 
                                 test_name: str='df_test'
@@ -121,6 +122,8 @@ def search_hyper_params_and_log(run_name: str,
                         )
                     )
                 )
+                if os.path.exists(f'{run_name}-{i}'):
+                    shutil.rmtree(f'{run_name}-{i}')
                 continue
     
         # generate predictions
