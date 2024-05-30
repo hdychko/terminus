@@ -63,7 +63,10 @@ def search_hyper_params_and_log(run_name: str,
                                 model_path: str, 
                                 custom_params_updates=None, 
                                 tags: Dict[str, str]=None, 
-                                test_name: str='df_test'
+                                test_name: str='df_test',
+                                model_type='lr',
+                                normalize=True,
+                                shap_explainer=shap.Explainer
                                ) -> pd.DataFrame:
     if data_dict.get(test_name) is None:
         raise ValueError(f'Incorrect `test_name`. Available keys: {set(data_dict.keys())}')
@@ -90,10 +93,11 @@ def search_hyper_params_and_log(run_name: str,
         Y_val = data_dict['df_val'][target_name]
 
         # standardize them
-        std_scaler = StandardScaler()
-        std_scaler.fit(X_train)
-        X_train = std_scaler.transform(X_train)
-        X_val = std_scaler.transform(X_val)
+        if normalize:
+            std_scaler = StandardScaler()
+            std_scaler.fit(X_train)
+            X_train = std_scaler.transform(X_train)
+            X_val = std_scaler.transform(X_val)
 
         # train a model
         with warnings.catch_warnings(record=True) as w:
@@ -206,12 +210,13 @@ def search_hyper_params_and_log(run_name: str,
         Y_train = data_dict['df_train'][target_name]
         X_val = data_dict['df_val'][cols_to_use]
         Y_val = data_dict['df_val'][target_name]
-    
-        std_scaler = StandardScaler()
-        std_scaler.fit(X_train)
+
+        if normalize:
+            std_scaler = StandardScaler()
+            std_scaler.fit(X_train)
         
-        X_train = std_scaler.transform(X_train)
-        X_val = std_scaler.transform(X_val)
+            X_train = std_scaler.transform(X_train)
+            X_val = std_scaler.transform(X_val)
     
         model_obj = mlflow.sklearn.load_model(f'{run_name}-{best_iter}')
         y_train_pred = model_obj.predict_proba(X_train)[:, 1]
@@ -252,12 +257,13 @@ def search_hyper_params_and_log(run_name: str,
         Y_train_val = data_dict['df_train_val'][target_name]
         X_test = data_dict[test_name][cols_to_use]
         Y_test = data_dict[test_name][target_name]
-    
-        std_scaler = StandardScaler()
-        std_scaler.fit(X_train_val)
         
-        X_train_val = std_scaler.transform(X_train_val)
-        X_test = std_scaler.transform(X_test)
+        std_scaler = None
+        if normalize:
+            std_scaler = StandardScaler()
+            std_scaler.fit(X_train_val)
+            X_train_val = std_scaler.transform(X_train_val)
+            X_test = std_scaler.transform(X_test)
     
         model_obj = model(**best_params)
         model_obj.fit(X_train_val, Y_train_val)
@@ -331,40 +337,75 @@ def search_hyper_params_and_log(run_name: str,
         if tags is not None:
             for tag_key, tag_value in tags.items():
                 mlflow.set_tag(tag_key, tag_value)
+        
         # SHAP
-        explainer_smpl= shap.Explainer(
-            model_obj, data_dict[test_name + '_sample'][cols_to_use], columns=cols_to_use, 
-            feature_dependence="interventional", model_output="predict_proba"
-        )
+        if model_type =='lr':
+            explainer_smpl= shap_explainer(
+                model_obj, data_dict[test_name + '_sample'][cols_to_use], columns=cols_to_use, 
+                feature_dependence="interventional", model_output="predict_proba"
+            )
+        else:
+            explainer_smpl= shap_explainer(
+                model_obj, feature_perturbation="tree_path_dependent", model_output="raw"
+            )
+
         explainer_obj = explainer_smpl(data_dict[test_name + '_sample'][cols_to_use])
         n_features = len(cols_to_use)
+        if model_type =='lr':
+            f, ax = plt.subplots(nrows=n_features, ncols=1, figsize=(20, 100))
+            for i, col in enumerate(cols_to_use):
+                _ = shap.plots.scatter(explainer_obj[:, col], ax=ax[i], show=False)
+            
+            mlflow.log_figure(f, "SHAP_test_sample_per_obs.png")
+            plt.close()
+        else:
+            f, ax = plt.subplots(nrows=n_features, ncols=1, figsize=(20, 100))
+            for i, col in enumerate(cols_to_use):
+                _ = shap.plots.scatter(explainer_obj[:, col, 1], ax=ax[i], show=False)
+            
+            mlflow.log_figure(f, "SHAP_test_sample_per_obs.png")
+            plt.close()
         
-        f, ax = plt.subplots(nrows=n_features, ncols=1, figsize=(20, 100))
-        for i, col in enumerate(cols_to_use):
-            _ = shap.plots.scatter(explainer_obj[:, col], ax=ax[i], show=False)
-        
-        mlflow.log_figure(f, "SHAP_test_sample_per_obs.png")
-        plt.close()
-    
-        f, ax = plt.subplots(nrows=1, ncols=1, figsize=(20, 10))
-        shap.summary_plot(
-            explainer_obj, data_dict[test_name + '_sample'][cols_to_use], 
-            plot_type="bar", feature_names=cols_to_use, plot_size=(5, 10), show=False
-            # max_daisplay=len(cols_to_use)
-        )
-        plt.show()
-        mlflow.log_figure(f, "SHAP_test_sample_features_importance.png") 
+        if model_type =='lr':
+            f, ax = plt.subplots(nrows=1, ncols=1, figsize=(20, 10))
+            shap.summary_plot(
+                explainer_obj, data_dict[test_name + '_sample'][cols_to_use], 
+                plot_type="bar", feature_names=cols_to_use, plot_size=(5, 10), show=False
+                # max_daisplay=len(cols_to_use)
+            )
+            plt.show()
+            mlflow.log_figure(f, "SHAP_test_sample_features_importance.png") 
+        else:
+            f, ax = plt.subplots(nrows=1, ncols=1, figsize=(20, 10))
+            shap.summary_plot(
+                explainer_obj[:, :, 1], data_dict[test_name + '_sample'][cols_to_use], 
+                plot_type="bar", feature_names=cols_to_use, plot_size=(5, 10), show=False
+                # max_daisplay=len(cols_to_use)
+            )
+            plt.show()
+            mlflow.log_figure(f, "SHAP_test_sample_features_importance.png") 
 
-        # mean absolute SHAP value as feature importance     
-        vals = np.abs(explainer_obj.values).mean(0)
-        df_shap_imp = pd.DataFrame(list(zip(cols_to_use, vals)), columns=['Feature', 'Importance(SHAP)'])
-        df_shap_imp['Importance(SHAP, %)'] = df_shap_imp['Importance(SHAP)'] * 100 / (df_shap_imp['Importance(SHAP)'].sum())
+        # mean absolute SHAP value as feature importance
+        if model_type =='lr':
+            vals = np.abs(explainer_obj.values).mean(0)
+            df_shap_imp = pd.DataFrame(list(zip(cols_to_use, vals)), columns=['Feature', 'Importance(SHAP)'])
+            df_shap_imp['Importance(SHAP, %)'] = df_shap_imp['Importance(SHAP)'] * 100 / (df_shap_imp['Importance(SHAP)'].sum())
+        else:
+            vals = np.abs(explainer_obj[:, :, 1].values).mean(0)
+            df_shap_imp = pd.DataFrame(list(zip(cols_to_use, vals)), columns=['Feature', 'Importance(SHAP)'])
+            df_shap_imp['Importance(SHAP, %)'] = df_shap_imp['Importance(SHAP)'] * 100 / (df_shap_imp['Importance(SHAP)'].sum())
+
 
         # coefficients of Logistic Regression as importance
-        df_coeff = coeff_stats(X_train_val, cols_to_use, model_obj)
-        df_coeff = pd.merge(df_coeff, df_shap_imp, on='Feature', how='outer')
         
-        mlflow.log_table(data=df_coeff, artifact_file=f"{run_name}-best_coeff.json")
+        if model_type == 'lr':
+            df_coeff = coeff_stats(X_train_val, cols_to_use, model_obj)
+            df_coeff = pd.merge(df_coeff, df_shap_imp, on='Feature', how='outer')
+            mlflow.log_table(data=df_coeff, artifact_file=f"{run_name}-best_coeff.json")
+        else:
+            df_coeff = df_shap_imp
+            mlflow.log_table(data=df_shap_imp, artifact_file=f"{run_name}-best_model-shap-imp.json")
+
         mlflow.log_table(data=df_metrics, artifact_file=f"{run_name}-hypertunning.json")
 
 
@@ -429,17 +470,20 @@ def train_pred(data_dict: Dict[str, pd.DataFrame],
               params,
               alias: str='',
               train_name='df_train_val',
-              test_name: str='df_test') -> Dict[str, Any]:
+              test_name: str='df_test', 
+              normalize=True) -> Dict[str, Any]:
     X_train = data_dict[train_name][cols_to_use]
     Y_train = data_dict[train_name][target_name]
 
     X_test = data_dict[test_name][cols_to_use]
     Y_test = data_dict[test_name][target_name]
 
-    std_scaler = StandardScaler()
-    std_scaler.fit(X_train)
-    X_train = std_scaler.transform(X_train)
-    X_test = std_scaler.transform(X_test)
+    std_scaler = None
+    if normalize:
+        std_scaler = StandardScaler()
+        std_scaler.fit(X_train)
+        X_train = std_scaler.transform(X_train)
+        X_test = std_scaler.transform(X_test)
 
     model_obj = model(**params)
     model_obj.fit(X_train, Y_train)
@@ -458,8 +502,10 @@ def evaluate_model(data: pd.DataFrame,
                    std_scaler,
                    target_name: str,
                    model_obj):
-    
-    X = std_scaler.transform(data[cols_to_use])
+    if std_scaler is not None:
+        X = std_scaler.transform(data[cols_to_use])
+    else:
+        X = data[cols_to_use]
     Y = data[target_name]
     y_pred = model_obj.predict_proba(X)[:, 1]
 
