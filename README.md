@@ -24,8 +24,8 @@
     ```
     
     TRAIN: [`2021-12-01` , `2022-01-01`)
-    VALIDATION: [`2022-01-01`, `2022-05-01`)
-    TEST: [`2022-05-01` , `2022-08-01`)
+    VALIDATION: [`2023-01-01`, `2023-05-01`)
+    TEST: [`2023-05-01` , `2023-08-01`)
     
     *The last date is not included in each interval provided above.
     
