@@ -5,7 +5,9 @@ mlartifacts/
 mlruns/
 *.xlsx
 notebooks/*.csv
-notebooks/*hyperparams_tunning*
+notebooks/*
+!notebooks/*.pynb
+
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
