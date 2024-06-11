@@ -6,7 +6,7 @@ mlruns/
 *.xlsx
 notebooks/*.csv
 notebooks/*
-!notebooks/*.pynb
+!notebooks/*.ipynb
 
 
 # Byte-compiled / optimized / DLL files
