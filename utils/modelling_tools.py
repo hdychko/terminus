@@ -352,12 +352,15 @@ def search_hyper_params_and_log(run_name: str,
         explainer_obj = explainer_smpl(data_dict[test_name + '_sample'][cols_to_use])
         n_features = len(cols_to_use)
         if model_type =='lr':
-            f, ax = plt.subplots(nrows=n_features, ncols=1, figsize=(20, 100))
-            for i, col in enumerate(cols_to_use):
-                _ = shap.plots.scatter(explainer_obj[:, col], ax=ax[i], show=False)
-            
-            mlflow.log_figure(f, "SHAP_test_sample_per_obs.png")
-            plt.close()
+            try:
+                f, ax = plt.subplots(nrows=n_features, ncols=1, figsize=(20, 100))
+                for i, col in enumerate(cols_to_use):
+                    _ = shap.plots.scatter(explainer_obj[:, col], ax=ax[i], show=False)
+                
+                mlflow.log_figure(f, "SHAP_test_sample_per_obs.png")
+                plt.close()
+            except Exception as e:
+                warnings.warn(f'Error while SHAP scatter plot generation: {e}')
         else:
             f, ax = plt.subplots(nrows=n_features, ncols=1, figsize=(20, 100))
             for i, col in enumerate(cols_to_use):
@@ -517,8 +520,9 @@ def evaluate_model(data: pd.DataFrame,
     precision_value, recall_value, _ = precision_recall_curve(Y, y_pred)
     auc_value = auc(x=recall_value, y=precision_value)
 
-    print("Test-PR_AUC", auc_value)
-    print("Test-Gini", gini_value)   
+    print("PR_AUC", auc_value)
+    print("Gini", gini_value)   
+    return auc_value, gini_value
 
 
 def shap_analysis(data: pd.DataFrame, model_obj, cols_to_use: List[str]):
